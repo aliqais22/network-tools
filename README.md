@@ -97,3 +97,7 @@ Run the program using:
 python main.py
 
 
+python -m PyInstaller --onefile --name SmartInternetTroubleshooter main.py
+python3 -m PyInstaller --onefile --name SmartInternetTroubleshooter main.py
+
+
