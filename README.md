@@ -58,6 +58,26 @@ This feature combines multiple tools into one complete test, making the project 
 | 3306 | MySQL |
 | 3389 | Remote Desktop |
 
+## Internet Troubleshooter
+
+This feature checks the user's internet connection and gives a diagnosis with suggested solutions.
+
+It checks:
+
+- Local IP address
+- Public IP address
+- Internet connectivity using 8.8.8.8
+- DNS resolution
+- HTTPS website access
+- Internet health score
+- Suggested solutions based on detected problems
+
+Example result:
+
+Internet Health Score: 100/100  
+Overall Status: GOOD  
+No major problems detected.
+
 ## How to Run
 
 Make sure Python is installed on your computer.
@@ -66,3 +86,5 @@ Run the program using:
 
 ```bash
 python main.py
+
+
