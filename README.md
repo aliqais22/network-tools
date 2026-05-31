@@ -78,6 +78,15 @@ Internet Health Score: 100/100
 Overall Status: GOOD  
 No major problems detected.
 
+## Run as EXE
+
+The project can also be converted into a Windows executable file using PyInstaller.
+
+Install PyInstaller:
+
+```bash
+python -m pip install pyinstaller
+
 ## How to Run
 
 Make sure Python is installed on your computer.
