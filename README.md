@@ -1,72 +1,68 @@
-# network-tools
+# Network Tools Dashboard
 
-A beginner-friendly Python CLI Network Tools Dashboard for learning basic networking concepts and practicing Python.
+A beginner-friendly Python networking toolkit that provides multiple network diagnostic tools in one dashboard.
 
-This project uses only built-in Python libraries, so it does not need any extra packages.
+## Project Description
+
+This project is a command-line Network Tools Dashboard written in Python.  
+It allows the user to test and analyze network connectivity using tools such as Ping, TCP Port Check, DNS Lookup, Local IP detection, DHCP information, Public IP lookup, Traceroute, Multi-Port Scanner, and Full Host Check.
+
+The project is mainly designed for Windows because it uses Windows networking commands such as:
+
+- ping -n
+- ipconfig /all
+- tracert
 
 ## Features
 
-- Ping a host using the Windows `ping` command
-- Check whether a TCP port is open using Python sockets
-- Look up the IP address for a domain name
-- Show the local IP address of your computer
-- Simple menu-driven command-line interface
+- Ping Host
+- TCP Port Check
+- DNS Lookup
+- Local IP Detection
+- DHCP Information
+- Public IP Lookup
+- Traceroute
+- Multi-Port Scanner
+- Generate Network Report
+- Full Host Check
 
-## How to run
+## Full Host Check Feature
 
-1. Open Command Prompt or PowerShell.
-2. Go to the project folder:
+The Full Host Check is an advanced feature that performs a complete diagnosis for a target host.
 
-```powershell
-cd C:\Users\USER\network-tools
-```
+It checks:
 
-3. Run the program:
+- DNS resolution
+- Ping connectivity
+- HTTP port 80
+- HTTPS port 443
+- Common TCP ports
+- Traceroute
+- Final diagnosis summary
+- Network Health Score
 
-```powershell
+This feature combines multiple tools into one complete test, making the project more useful and professional.
+
+## Common Ports Scanned
+
+| Port | Service |
+|------|---------|
+| 21 | FTP |
+| 22 | SSH |
+| 25 | SMTP |
+| 53 | DNS |
+| 80 | HTTP |
+| 110 | POP3 |
+| 143 | IMAP |
+| 443 | HTTPS |
+| 3306 | MySQL |
+| 3389 | Remote Desktop |
+
+## How to Run
+
+Make sure Python is installed on your computer.
+
+Run the program using:
+
+```bash
 python main.py
-```
-
-If `python` does not work, try:
-
-```powershell
-py main.py
-```
-
-## Example usage
-
-```text
-============================
- Network Tools Dashboard
-============================
-
-Choose an option:
-1) Ping a host
-2) Check if a TCP port is open
-3) DNS lookup
-4) Show my local IP address
-5) Exit
-
-Enter your choice (1-5): 3
-Enter a domain name (example: python.org): python.org
-python.org resolves to 151.101.64.223
-```
-
-Another example:
-
-```text
-Enter your choice (1-5): 2
-Enter a host (example: example.com): example.com
-Enter a TCP port (example: 80): 80
-
-Checking example.com:80...
-OPEN: TCP port 80 is open on example.com.
-```
-
-## Future improvements
-
-- Add support for saving results to a log file
-- Add IPv6 support
-- Add a nicer command-line interface with colors
-- Add tests for input validation
-- Add Linux and macOS ping support
