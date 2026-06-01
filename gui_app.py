@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -27,7 +28,11 @@ class SmartInternetTroubleshooter(tk.Tk):
         self.port_var = tk.StringVar(value="80")
         self.scan_ports_var = tk.StringVar(value=DEFAULT_SCAN_PORTS)
         self.status_var = tk.StringVar(value="Ready")
+        self.device_name_var = tk.StringVar()
+        self.device_address_var = tk.StringVar()
+        self.device_type_var = tk.StringVar(value="Router")
         self.logs_folder = Path(__file__).resolve().parent / "logs"
+        self.devices_file = Path(__file__).resolve().parent / "devices.json"
         self.logs_folder.mkdir(exist_ok=True)
 
         self._build_window()
@@ -90,6 +95,68 @@ class SmartInternetTroubleshooter(tk.Tk):
             button.grid(row=index // 5, column=index % 5, sticky=tk.EW, padx=4, pady=4)
             buttons.columnconfigure(index % 5, weight=1)
 
+        devices = ttk.LabelFrame(root, text="Company Devices", padding=10)
+        devices.pack(fill=tk.X, pady=(0, 10))
+        devices.columnconfigure(1, weight=1)
+        devices.columnconfigure(3, weight=1)
+
+        ttk.Label(devices, text="Device Name").grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        ttk.Entry(devices, textvariable=self.device_name_var).grid(
+            row=0,
+            column=1,
+            sticky=tk.EW,
+            padx=(0, 12),
+        )
+
+        ttk.Label(devices, text="IP Address / Host").grid(row=0, column=2, sticky=tk.W, padx=(0, 8))
+        ttk.Entry(devices, textvariable=self.device_address_var).grid(
+            row=0,
+            column=3,
+            sticky=tk.EW,
+            padx=(0, 12),
+        )
+
+        ttk.Label(devices, text="Device Type").grid(row=0, column=4, sticky=tk.W, padx=(0, 8))
+        device_type = ttk.Combobox(
+            devices,
+            textvariable=self.device_type_var,
+            values=("Router", "Server", "Printer", "Camera", "PC", "Other"),
+            state="readonly",
+            width=12,
+        )
+        device_type.grid(row=0, column=5, sticky=tk.W)
+
+        device_actions = ttk.Frame(devices)
+        device_actions.grid(row=1, column=0, columnspan=6, sticky=tk.W, pady=(8, 8))
+
+        ttk.Button(device_actions, text="Add Device", command=self.add_device).pack(side=tk.LEFT)
+        ttk.Button(device_actions, text="Remove Selected Device", command=self.remove_selected_device).pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
+        ttk.Button(device_actions, text="Save Devices", command=self.save_devices).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(device_actions, text="Load Devices", command=self.load_devices).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(device_actions, text="Check Company Network", command=self.check_company_network).pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
+
+        table_frame = ttk.Frame(devices)
+        table_frame.grid(row=2, column=0, columnspan=6, sticky=tk.EW)
+        table_frame.columnconfigure(0, weight=1)
+
+        columns = ("Name", "Address", "Type", "Last Status")
+        self.devices_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
+        for column in columns:
+            self.devices_table.heading(column, text=column)
+            self.devices_table.column(column, width=150, anchor=tk.W)
+        self.devices_table.column("Last Status", width=110, anchor=tk.W)
+        self.devices_table.grid(row=0, column=0, sticky=tk.EW)
+
+        devices_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.devices_table.yview)
+        devices_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        self.devices_table.configure(yscrollcommand=devices_scrollbar.set)
+
         actions = ttk.Frame(root)
         actions.pack(fill=tk.X, pady=(0, 10))
 
@@ -105,6 +172,7 @@ class SmartInternetTroubleshooter(tk.Tk):
         self.output.pack(fill=tk.BOTH, expand=True)
 
         self.write_line("Welcome. Enter a host/domain and choose a tool to begin.")
+        self.load_devices(show_message=False)
 
     def run_in_background(self, title, task):
         self.status_var.set(f"Running: {title}")
@@ -173,6 +241,126 @@ class SmartInternetTroubleshooter(tk.Tk):
             os.startfile(str(self.logs_folder))
         except OSError as error:
             messagebox.showerror("Open Logs Folder", f"Could not open logs folder.\n\n{error}")
+
+    def add_device(self):
+        name = self.device_name_var.get().strip()
+        address = self.device_address_var.get().strip()
+        device_type = self.device_type_var.get().strip() or "Other"
+
+        if not name:
+            messagebox.showinfo("Add Device", "Please enter a device name.")
+            return
+        if not address:
+            messagebox.showinfo("Add Device", "Please enter an IP address or host.")
+            return
+
+        self.devices_table.insert("", END, values=(name, address, device_type, "Not checked"))
+        self.device_name_var.set("")
+        self.device_address_var.set("")
+        self.device_type_var.set("Router")
+        self.status_var.set(f"Added device: {name}")
+
+    def remove_selected_device(self):
+        selected_items = self.devices_table.selection()
+        if not selected_items:
+            messagebox.showinfo("Remove Selected Device", "Please select a device to remove.")
+            return
+
+        for item in selected_items:
+            self.devices_table.delete(item)
+        self.status_var.set("Selected device removed")
+
+    def get_devices(self):
+        devices = []
+        for item in self.devices_table.get_children():
+            name, address, device_type, last_status = self.devices_table.item(item, "values")
+            devices.append(
+                {
+                    "name": name,
+                    "address": address,
+                    "type": device_type,
+                    "last_status": last_status,
+                }
+            )
+        return devices
+
+    def save_devices(self):
+        devices = self.get_devices()
+        self.devices_file.write_text(json.dumps(devices, indent=2), encoding="utf-8")
+        self.status_var.set(f"Saved {len(devices)} device(s)")
+        self.write_line(f"Saved {len(devices)} company device(s) to {self.devices_file.name}.")
+
+    def load_devices(self, show_message=True):
+        if not self.devices_file.exists():
+            if show_message:
+                messagebox.showinfo("Load Devices", "No devices.json file was found yet.")
+            return
+
+        try:
+            devices = json.loads(self.devices_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showerror("Load Devices", f"Could not load devices.json.\n\n{error}")
+            return
+
+        self.devices_table.delete(*self.devices_table.get_children())
+        for device in devices:
+            self.devices_table.insert(
+                "",
+                END,
+                values=(
+                    device.get("name", ""),
+                    device.get("address", ""),
+                    device.get("type", "Other"),
+                    device.get("last_status", "Not checked"),
+                ),
+            )
+
+        self.status_var.set(f"Loaded {len(devices)} device(s)")
+        if show_message:
+            self.write_line(f"Loaded {len(devices)} company device(s) from {self.devices_file.name}.")
+
+    def set_device_status(self, item, status):
+        current_values = list(self.devices_table.item(item, "values"))
+        if len(current_values) == 4:
+            current_values[3] = status
+            self.devices_table.item(item, values=current_values)
+
+    def ping_device_once(self, address):
+        try:
+            result = subprocess.run(
+                ["ping", "-n", "1", "-w", "1000", address],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            self.write_line("ERROR: The Windows ping command was not found.")
+            return False
+
+    def check_company_network(self):
+        items = list(self.devices_table.get_children())
+        if not items:
+            messagebox.showinfo("Check Company Network", "Please add or load at least one company device.")
+            return
+
+        device_rows = []
+        for item in items:
+            name, address, device_type, last_status = self.devices_table.item(item, "values")
+            device_rows.append((item, name, address, device_type, last_status))
+
+        def task():
+            self.write_line(f"Checking {len(device_rows)} company device(s)...")
+            for item, name, address, device_type, _last_status in device_rows:
+                self.write_line(f"Pinging {name} ({device_type}) at {address}...")
+                status = "OK" if self.ping_device_once(address) else "DOWN"
+                self.after(0, self.set_device_status, item, status)
+                self.write_line(f"{name} [{address}] status: {status}")
+            self.write_line("Company network check finished.")
+
+        self.run_in_background("Check Company Network", task)
 
     def get_host(self):
         host = self.host_var.get().strip()
