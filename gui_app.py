@@ -6,6 +6,7 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from tkinter import END, filedialog, messagebox, scrolledtext, ttk
@@ -34,6 +35,8 @@ class SmartInternetTroubleshooter(tk.Tk):
         self.device_type_var = tk.StringVar(value="Router")
         self.network_health_var = tk.StringVar(value="Network Health: Not checked")
         self.discovery_progress_var = tk.StringVar(value="Discovery: Not started")
+        self.discovery_running = False
+        self.discovery_cancel_event = threading.Event()
         self.logs_folder = Path(__file__).resolve().parent / "logs"
         self.devices_file = Path(__file__).resolve().parent / "devices.json"
         self.logs_folder.mkdir(exist_ok=True)
@@ -143,7 +146,22 @@ class SmartInternetTroubleshooter(tk.Tk):
             side=tk.LEFT,
             padx=(8, 0),
         )
-        ttk.Button(device_actions, text="Discover Network Devices", command=self.discover_network_devices).pack(
+        self.discover_button = ttk.Button(
+            device_actions,
+            text="Discover Network Devices",
+            command=self.discover_network_devices,
+        )
+        self.discover_button.pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
+        self.stop_discovery_button = ttk.Button(
+            device_actions,
+            text="Stop Discovery",
+            command=self.stop_discovery,
+            state=tk.DISABLED,
+        )
+        self.stop_discovery_button.pack(
             side=tk.LEFT,
             padx=(8, 0),
         )
@@ -409,16 +427,19 @@ class SmartInternetTroubleshooter(tk.Tk):
     def ping_discovery_address(self, address):
         try:
             result = subprocess.run(
-                ["ping", "-n", "1", "-w", "500", address],
+                ["ping", "-n", "1", "-w", "300", address],
                 capture_output=True,
                 text=True,
                 check=False,
                 encoding="utf-8",
                 errors="replace",
+                timeout=2,
             )
             return result.returncode == 0
         except FileNotFoundError:
             self.write_line("ERROR: The Windows ping command was not found.")
+            return False
+        except subprocess.TimeoutExpired:
             return False
 
     def get_mac_address(self, address):
@@ -430,8 +451,9 @@ class SmartInternetTroubleshooter(tk.Tk):
                 check=False,
                 encoding="utf-8",
                 errors="replace",
+                timeout=2,
             )
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return "MAC unavailable"
 
         match = re.search(r"([0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}", result.stdout)
@@ -445,66 +467,138 @@ class SmartInternetTroubleshooter(tk.Tk):
     def finish_discovery_progress(self, found_count):
         self.discovery_progress_var.set(f"Discovery finished: {found_count} found")
 
+    def set_discovery_controls(self, running):
+        if running:
+            self.discover_button.configure(state=tk.DISABLED)
+            self.stop_discovery_button.configure(state=tk.NORMAL)
+            self.status_var.set("Running: Discover Network Devices")
+        else:
+            self.discover_button.configure(state=tk.NORMAL)
+            self.stop_discovery_button.configure(state=tk.DISABLED)
+            self.status_var.set("Ready")
+
+    def stop_discovery(self):
+        if not self.discovery_running:
+            self.write_line("No discovery is currently running.")
+            return
+
+        self.discovery_cancel_event.set()
+        self.discovery_progress_var.set("Discovery stop requested...")
+        self.write_line("Discovery stop requested...")
+
+    def discover_single_address(self, address, known_addresses):
+        if self.discovery_cancel_event.is_set():
+            return None
+
+        if not self.ping_discovery_address(address):
+            return None
+
+        if self.discovery_cancel_event.is_set():
+            return None
+
+        mac_address = self.get_mac_address(address)
+        status = "KNOWN" if address.lower() in known_addresses else "UNKNOWN"
+        return address, mac_address, status
+
     def discover_network_devices(self):
+        if self.discovery_running:
+            messagebox.showinfo("Discover Network Devices", "Discovery is already running.")
+            return
+
         local_ip = self.get_local_ipv4_address()
         if not local_ip:
             messagebox.showerror("Discover Network Devices", "Could not determine the local IP address.")
             return
 
         octets = local_ip.split(".")
-        if len(octets) != 4 or local_ip.startswith("127."):
+        if len(octets) != 4 or octets[0] != "192" or octets[1] != "168":
             messagebox.showerror(
                 "Discover Network Devices",
-                f"Could not use this local IP for subnet discovery: {local_ip}",
+                f"Discovery currently supports 192.168.x.x local networks only.\n\nLocal IP: {local_ip}",
             )
             return
 
         subnet_prefix = ".".join(octets[:3])
         scan_addresses = [f"{subnet_prefix}.{number}" for number in range(1, 255)]
         known_addresses = self.get_known_device_addresses()
+        self.discovery_running = True
+        self.discovery_cancel_event.clear()
+        self.set_discovery_controls(running=True)
 
         def task():
             discovered_devices = []
             known_devices = []
             unknown_devices = []
             total_ips = len(scan_addresses)
+            completed = 0
+            stopped = False
 
-            self.write_line(f"Starting authorized local network discovery from local IP {local_ip}.")
-            self.write_line(f"Scanning subnet: {subnet_prefix}.1 to {subnet_prefix}.254")
+            try:
+                self.write_section("Discover Network Devices")
+                self.write_line(f"Starting authorized local network discovery from local IP {local_ip}.")
+                self.write_line(f"Scanning subnet: {subnet_prefix}.1 to {subnet_prefix}.254")
 
-            for index, address in enumerate(scan_addresses, start=1):
-                self.after(0, self.update_discovery_progress, index, total_ips)
-                if self.ping_discovery_address(address):
-                    mac_address = self.get_mac_address(address)
-                    status = "KNOWN" if address.lower() in known_addresses else "UNKNOWN"
-                    discovered_devices.append((address, mac_address, status))
+                with ThreadPoolExecutor(max_workers=30) as executor:
+                    futures = [
+                        executor.submit(self.discover_single_address, address, known_addresses)
+                        for address in scan_addresses
+                    ]
 
-                    if status == "KNOWN":
-                        known_devices.append((address, mac_address))
-                    else:
-                        unknown_devices.append((address, mac_address))
+                    for future in as_completed(futures):
+                        completed += 1
+                        self.after(0, self.update_discovery_progress, completed, total_ips)
 
-                    self.write_line(f"Discovered {status} device: {address} | MAC: {mac_address}")
+                        if self.discovery_cancel_event.is_set():
+                            stopped = True
+                            for pending_future in futures:
+                                pending_future.cancel()
+                            break
 
-            self.after(0, self.finish_discovery_progress, len(discovered_devices))
+                        result = future.result()
+                        if result is None:
+                            continue
 
-            self.write_line("")
-            self.write_line("Network Discovery Summary")
-            self.write_line("-------------------------")
-            self.write_line(f"Total IPs scanned: {total_ips}")
-            self.write_line(f"Total devices found: {len(discovered_devices)}")
-            self.write_line(f"Known devices found: {len(known_devices)}")
-            self.write_line(f"Unknown devices found: {len(unknown_devices)}")
-            self.write_line("")
-            self.write_line("Unknown devices:")
-            if unknown_devices:
-                for address, mac_address in unknown_devices:
-                    self.write_line(f"Unknown device found: {address} | MAC: {mac_address}")
-            else:
-                self.write_line("None")
-            self.write_line("Network discovery finished.")
+                        address, mac_address, status = result
+                        discovered_devices.append((address, mac_address, status))
 
-        self.run_in_background("Discover Network Devices", task)
+                        if status == "KNOWN":
+                            known_devices.append((address, mac_address))
+                        else:
+                            unknown_devices.append((address, mac_address))
+
+                        self.write_line(f"Discovered {status} device: {address} | MAC: {mac_address}")
+
+                self.write_line("")
+                self.write_line("Network Discovery Summary")
+                self.write_line("-------------------------")
+                self.write_line(f"Total scanned: {completed}")
+                self.write_line(f"Total IPs in subnet: {total_ips}")
+                self.write_line(f"Devices found: {len(discovered_devices)}")
+                self.write_line(f"Known devices: {len(known_devices)}")
+                self.write_line(f"Unknown devices: {len(unknown_devices)}")
+                self.write_line("")
+                self.write_line("Unknown devices:")
+                if unknown_devices:
+                    for address, mac_address in unknown_devices:
+                        self.write_line(f"Unknown device found: {address} | MAC: {mac_address}")
+                else:
+                    self.write_line("None")
+
+            except Exception as error:
+                self.write_line(f"ERROR: Discovery failed. Details: {error}")
+            finally:
+                stopped = stopped or self.discovery_cancel_event.is_set()
+                self.discovery_running = False
+                self.after(0, self.set_discovery_controls, False)
+
+                if stopped:
+                    self.after(0, self.discovery_progress_var.set, f"Discovery stopped: {completed}/{total_ips}")
+                    self.write_line("Discovery stopped.")
+                else:
+                    self.after(0, self.finish_discovery_progress, len(discovered_devices))
+                    self.write_line("Discovery finished.")
+
+        threading.Thread(target=task, daemon=True).start()
 
     def check_company_network(self):
         items = list(self.devices_table.get_children())
