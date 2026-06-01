@@ -1,103 +1,37 @@
-# Network Tools Dashboard
+# Smart Internet Troubleshooter
 
-A beginner-friendly Python networking toolkit that provides multiple network diagnostic tools in one dashboard.
+Smart Internet Troubleshooter is a simple Windows network troubleshooting tool built with Python and Tkinter.
 
-## Project Description
+The app helps users run basic network checks from a graphical interface instead of typing commands manually in the terminal.
 
-This project is a command-line Network Tools Dashboard written in Python.  
-It allows the user to test and analyze network connectivity using tools such as Ping, TCP Port Check, DNS Lookup, Local IP detection, DHCP information, Public IP lookup, Traceroute, Multi-Port Scanner, and Full Host Check.
+## Current Status
 
-The project is mainly designed for Windows because it uses Windows networking commands such as:
+Development version.
 
-- ping -n
-- ipconfig /all
-- tracert
+The project is currently a Python GUI application.
+EXE build and installer will be added later after the main features are completed.
 
 ## Features
 
 - Ping Host
 - TCP Port Check
 - DNS Lookup
-- Local IP Detection
+- Local IP Check
 - DHCP Information
 - Public IP Lookup
 - Traceroute
 - Multi-Port Scanner
-- Generate Network Report
 - Full Host Check
+- Internet Troubleshooter
+- Save Report
+- Automatic Daily Logs
+- Open Logs Folder
 
-## Full Host Check Feature
+## Logs
 
-The Full Host Check is an advanced feature that performs a complete diagnosis for a target host.
+The application automatically creates a `logs` folder next to `gui_app.py`.
 
-It checks:
+Each day, a new log file is created using this format:
 
-- DNS resolution
-- Ping connectivity
-- HTTP port 80
-- HTTPS port 443
-- Common TCP ports
-- Traceroute
-- Final diagnosis summary
-- Network Health Score
-
-This feature combines multiple tools into one complete test, making the project more useful and professional.
-
-## Common Ports Scanned
-
-| Port | Service |
-|------|---------|
-| 21 | FTP |
-| 22 | SSH |
-| 25 | SMTP |
-| 53 | DNS |
-| 80 | HTTP |
-| 110 | POP3 |
-| 143 | IMAP |
-| 443 | HTTPS |
-| 3306 | MySQL |
-| 3389 | Remote Desktop |
-
-## Internet Troubleshooter
-
-This feature checks the user's internet connection and gives a diagnosis with suggested solutions.
-
-It checks:
-
-- Local IP address
-- Public IP address
-- Internet connectivity using 8.8.8.8
-- DNS resolution
-- HTTPS website access
-- Internet health score
-- Suggested solutions based on detected problems
-
-Example result:
-
-Internet Health Score: 100/100  
-Overall Status: GOOD  
-No major problems detected.
-
-## Run as EXE
-
-The project can also be converted into a Windows executable file using PyInstaller.
-
-Install PyInstaller:
-
-```bash
-python -m pip install pyinstaller
-
-## How to Run
-
-Make sure Python is installed on your computer.
-
-Run the program using:
-
-```bash
-python main.py
-
-
-python -m PyInstaller --onefile --name SmartInternetTroubleshooter main.py
-python3 -m PyInstaller --onefile --name SmartInternetTroubleshooter main.py
-
-
+```text
+logs/network_log_YYYY-MM-DD.txt
