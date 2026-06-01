@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -32,6 +33,7 @@ class SmartInternetTroubleshooter(tk.Tk):
         self.device_address_var = tk.StringVar()
         self.device_type_var = tk.StringVar(value="Router")
         self.network_health_var = tk.StringVar(value="Network Health: Not checked")
+        self.discovery_progress_var = tk.StringVar(value="Discovery: Not started")
         self.logs_folder = Path(__file__).resolve().parent / "logs"
         self.devices_file = Path(__file__).resolve().parent / "devices.json"
         self.logs_folder.mkdir(exist_ok=True)
@@ -141,11 +143,16 @@ class SmartInternetTroubleshooter(tk.Tk):
             side=tk.LEFT,
             padx=(8, 0),
         )
+        ttk.Button(device_actions, text="Discover Network Devices", command=self.discover_network_devices).pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
         ttk.Label(
             device_actions,
             textvariable=self.network_health_var,
             font=("Segoe UI", 9, "bold"),
         ).pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Label(device_actions, textvariable=self.discovery_progress_var).pack(side=tk.LEFT, padx=(16, 0))
 
         table_frame = ttk.Frame(devices)
         table_frame.grid(row=2, column=0, columnspan=6, sticky=tk.EW)
@@ -372,6 +379,132 @@ class SmartInternetTroubleshooter(tk.Tk):
         except FileNotFoundError:
             self.write_line("ERROR: The Windows ping command was not found.")
             return False
+
+    def get_local_ipv4_address(self):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as test_socket:
+                test_socket.connect(("8.8.8.8", 80))
+                return test_socket.getsockname()[0]
+        except OSError:
+            try:
+                return socket.gethostbyname(socket.gethostname())
+            except socket.gaierror:
+                return None
+
+    def get_known_device_addresses(self):
+        known_addresses = set()
+        for device in self.get_devices():
+            address = device["address"].strip()
+            if not address:
+                continue
+
+            known_addresses.add(address.lower())
+            try:
+                known_addresses.add(socket.gethostbyname(address))
+            except socket.gaierror:
+                pass
+
+        return known_addresses
+
+    def ping_discovery_address(self, address):
+        try:
+            result = subprocess.run(
+                ["ping", "-n", "1", "-w", "500", address],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            self.write_line("ERROR: The Windows ping command was not found.")
+            return False
+
+    def get_mac_address(self, address):
+        try:
+            result = subprocess.run(
+                ["arp", "-a", address],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return "MAC unavailable"
+
+        match = re.search(r"([0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}", result.stdout)
+        if match:
+            return match.group(0)
+        return "MAC not found"
+
+    def update_discovery_progress(self, current, total):
+        self.discovery_progress_var.set(f"Discovering devices... {current}/{total}")
+
+    def finish_discovery_progress(self, found_count):
+        self.discovery_progress_var.set(f"Discovery finished: {found_count} found")
+
+    def discover_network_devices(self):
+        local_ip = self.get_local_ipv4_address()
+        if not local_ip:
+            messagebox.showerror("Discover Network Devices", "Could not determine the local IP address.")
+            return
+
+        octets = local_ip.split(".")
+        if len(octets) != 4 or local_ip.startswith("127."):
+            messagebox.showerror(
+                "Discover Network Devices",
+                f"Could not use this local IP for subnet discovery: {local_ip}",
+            )
+            return
+
+        subnet_prefix = ".".join(octets[:3])
+        scan_addresses = [f"{subnet_prefix}.{number}" for number in range(1, 255)]
+        known_addresses = self.get_known_device_addresses()
+
+        def task():
+            discovered_devices = []
+            known_devices = []
+            unknown_devices = []
+            total_ips = len(scan_addresses)
+
+            self.write_line(f"Starting authorized local network discovery from local IP {local_ip}.")
+            self.write_line(f"Scanning subnet: {subnet_prefix}.1 to {subnet_prefix}.254")
+
+            for index, address in enumerate(scan_addresses, start=1):
+                self.after(0, self.update_discovery_progress, index, total_ips)
+                if self.ping_discovery_address(address):
+                    mac_address = self.get_mac_address(address)
+                    status = "KNOWN" if address.lower() in known_addresses else "UNKNOWN"
+                    discovered_devices.append((address, mac_address, status))
+
+                    if status == "KNOWN":
+                        known_devices.append((address, mac_address))
+                    else:
+                        unknown_devices.append((address, mac_address))
+
+                    self.write_line(f"Discovered {status} device: {address} | MAC: {mac_address}")
+
+            self.after(0, self.finish_discovery_progress, len(discovered_devices))
+
+            self.write_line("")
+            self.write_line("Network Discovery Summary")
+            self.write_line("-------------------------")
+            self.write_line(f"Total IPs scanned: {total_ips}")
+            self.write_line(f"Total devices found: {len(discovered_devices)}")
+            self.write_line(f"Known devices found: {len(known_devices)}")
+            self.write_line(f"Unknown devices found: {len(unknown_devices)}")
+            self.write_line("")
+            self.write_line("Unknown devices:")
+            if unknown_devices:
+                for address, mac_address in unknown_devices:
+                    self.write_line(f"Unknown device found: {address} | MAC: {mac_address}")
+            else:
+                self.write_line("None")
+            self.write_line("Network discovery finished.")
+
+        self.run_in_background("Discover Network Devices", task)
 
     def check_company_network(self):
         items = list(self.devices_table.get_children())
