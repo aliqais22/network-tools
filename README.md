@@ -34,4 +34,4 @@ The application automatically creates a `logs` folder next to `gui_app.py`.
 Each day, a new log file is created using this format:
 
 ```text
-logs/network_log_YYYY-MM-DD.txt
+logs/network_log_2026.6.1.txt
