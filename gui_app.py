@@ -31,6 +31,7 @@ class SmartInternetTroubleshooter(tk.Tk):
         self.device_name_var = tk.StringVar()
         self.device_address_var = tk.StringVar()
         self.device_type_var = tk.StringVar(value="Router")
+        self.network_health_var = tk.StringVar(value="Network Health: Not checked")
         self.logs_folder = Path(__file__).resolve().parent / "logs"
         self.devices_file = Path(__file__).resolve().parent / "devices.json"
         self.logs_folder.mkdir(exist_ok=True)
@@ -140,6 +141,11 @@ class SmartInternetTroubleshooter(tk.Tk):
             side=tk.LEFT,
             padx=(8, 0),
         )
+        ttk.Label(
+            device_actions,
+            textvariable=self.network_health_var,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=(16, 0))
 
         table_frame = ttk.Frame(devices)
         table_frame.grid(row=2, column=0, columnspan=6, sticky=tk.EW)
@@ -151,6 +157,9 @@ class SmartInternetTroubleshooter(tk.Tk):
             self.devices_table.heading(column, text=column)
             self.devices_table.column(column, width=150, anchor=tk.W)
         self.devices_table.column("Last Status", width=110, anchor=tk.W)
+        self.devices_table.tag_configure("ok", background="#d9f2d9")
+        self.devices_table.tag_configure("down", background="#f8d7da")
+        self.devices_table.tag_configure("unknown", background="")
         self.devices_table.grid(row=0, column=0, sticky=tk.EW)
 
         devices_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.devices_table.yview)
@@ -254,7 +263,7 @@ class SmartInternetTroubleshooter(tk.Tk):
             messagebox.showinfo("Add Device", "Please enter an IP address or host.")
             return
 
-        self.devices_table.insert("", END, values=(name, address, device_type, "Not checked"))
+        self.devices_table.insert("", END, values=(name, address, device_type, "Not checked"), tags=("unknown",))
         self.device_name_var.set("")
         self.device_address_var.set("")
         self.device_type_var.set("Router")
@@ -304,6 +313,7 @@ class SmartInternetTroubleshooter(tk.Tk):
 
         self.devices_table.delete(*self.devices_table.get_children())
         for device in devices:
+            last_status = device.get("last_status", "Not checked")
             self.devices_table.insert(
                 "",
                 END,
@@ -311,19 +321,42 @@ class SmartInternetTroubleshooter(tk.Tk):
                     device.get("name", ""),
                     device.get("address", ""),
                     device.get("type", "Other"),
-                    device.get("last_status", "Not checked"),
+                    last_status,
                 ),
+                tags=(self.status_to_tag(last_status),),
             )
 
         self.status_var.set(f"Loaded {len(devices)} device(s)")
         if show_message:
             self.write_line(f"Loaded {len(devices)} company device(s) from {self.devices_file.name}.")
 
+    def status_to_tag(self, status):
+        if status == "OK":
+            return "ok"
+        if status == "DOWN":
+            return "down"
+        return "unknown"
+
     def set_device_status(self, item, status):
         current_values = list(self.devices_table.item(item, "values"))
         if len(current_values) == 4:
             current_values[3] = status
-            self.devices_table.item(item, values=current_values)
+            self.devices_table.item(item, values=current_values, tags=(self.status_to_tag(status),))
+
+    def format_health_score(self, health_score):
+        if health_score.is_integer():
+            return f"{health_score:.0f}%"
+        return f"{health_score:.1f}%"
+
+    def get_health_status(self, health_score):
+        if health_score == 100:
+            return "HEALTHY"
+        if health_score >= 50:
+            return "WARNING"
+        return "CRITICAL"
+
+    def update_network_health_label(self, health_score, health_status):
+        self.network_health_var.set(f"Network Health: {self.format_health_score(health_score)} - {health_status}")
 
     def ping_device_once(self, address):
         try:
@@ -352,12 +385,46 @@ class SmartInternetTroubleshooter(tk.Tk):
             device_rows.append((item, name, address, device_type, last_status))
 
         def task():
+            ok_devices = []
+            down_devices = []
+
             self.write_line(f"Checking {len(device_rows)} company device(s)...")
             for item, name, address, device_type, _last_status in device_rows:
                 self.write_line(f"Pinging {name} ({device_type}) at {address}...")
                 status = "OK" if self.ping_device_once(address) else "DOWN"
                 self.after(0, self.set_device_status, item, status)
                 self.write_line(f"{name} [{address}] status: {status}")
+
+                if status == "OK":
+                    ok_devices.append((name, address, device_type))
+                else:
+                    down_devices.append((name, address, device_type))
+
+            total_devices = len(device_rows)
+            ok_count = len(ok_devices)
+            down_count = len(down_devices)
+            health_score = (ok_count / total_devices) * 100
+            health_status = self.get_health_status(health_score)
+            last_check_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            self.after(0, self.update_network_health_label, health_score, health_status)
+
+            self.write_line("")
+            self.write_line("Company Network Summary")
+            self.write_line("-----------------------")
+            self.write_line(f"Total devices: {total_devices}")
+            self.write_line(f"OK devices: {ok_count}")
+            self.write_line(f"DOWN devices: {down_count}")
+            self.write_line(f"Health Score: {self.format_health_score(health_score)}")
+            self.write_line(f"Status: {health_status}")
+            self.write_line(f"Last check time: {last_check_time}")
+            self.write_line("")
+            self.write_line("DOWN devices:")
+            if down_devices:
+                for name, address, device_type in down_devices:
+                    self.write_line(f"- {name} ({device_type}) at {address}")
+            else:
+                self.write_line("None")
             self.write_line("Company network check finished.")
 
         self.run_in_background("Check Company Network", task)
