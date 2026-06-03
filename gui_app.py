@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,6 +96,7 @@ class SmartInternetTroubleshooter(tk.Tk):
             ("Multi-Port Scanner", self.multi_port_scanner),
             ("Full Host Check", self.full_host_check),
             ("Internet Troubleshooter", self.internet_troubleshooter),
+            ("Internet Quality Test", self.internet_quality_test),
         ]
 
         for index, (text, command) in enumerate(button_specs):
@@ -1019,6 +1021,472 @@ class SmartInternetTroubleshooter(tk.Tk):
             self.write_line("Troubleshooter finished.")
 
         self.run_in_background("Internet Troubleshooter", task)
+
+    def parse_ping_quality_output(self, output, expected_packets):
+        packet_match = re.search(
+            r"Sent\s*=\s*(\d+).*?Received\s*=\s*(\d+).*?Lost\s*=\s*(\d+)",
+            output,
+            re.IGNORECASE | re.DOTALL,
+        )
+        loss_match = re.search(r"\((\d+)%\s*loss\)", output, re.IGNORECASE)
+        latency_match = re.search(
+            r"Minimum\s*=\s*(\d+)ms,\s*Maximum\s*=\s*(\d+)ms,\s*Average\s*=\s*(\d+)ms",
+            output,
+            re.IGNORECASE,
+        )
+        reply_times = [int(value) for value in re.findall(r"time[=<]\s*(\d+)\s*ms", output, re.IGNORECASE)]
+
+        if packet_match:
+            packets_sent = int(packet_match.group(1))
+            packets_received = int(packet_match.group(2))
+            packets_lost = int(packet_match.group(3))
+        else:
+            packets_sent = expected_packets
+            packets_received = len(reply_times)
+            packets_lost = max(packets_sent - packets_received, 0)
+
+        if loss_match:
+            packet_loss_percent = int(loss_match.group(1))
+        elif packets_sent:
+            packet_loss_percent = (packets_lost / packets_sent) * 100
+        else:
+            packet_loss_percent = 100
+
+        if latency_match:
+            min_ping = int(latency_match.group(1))
+            max_ping = int(latency_match.group(2))
+            avg_ping = int(latency_match.group(3))
+        elif reply_times:
+            min_ping = min(reply_times)
+            max_ping = max(reply_times)
+            avg_ping = sum(reply_times) / len(reply_times)
+        else:
+            min_ping = None
+            max_ping = None
+            avg_ping = None
+
+        if len(reply_times) >= 2:
+            differences = [
+                abs(reply_times[index] - reply_times[index - 1])
+                for index in range(1, len(reply_times))
+            ]
+            jitter = sum(differences) / len(differences)
+        else:
+            jitter = None
+
+        return {
+            "packets_sent": packets_sent,
+            "packets_received": packets_received,
+            "packets_lost": packets_lost,
+            "packet_loss_percent": packet_loss_percent,
+            "min_ping": min_ping,
+            "max_ping": max_ping,
+            "avg_ping": avg_ping,
+            "jitter": jitter,
+        }
+
+    def format_ms_value(self, value):
+        if value is None:
+            return "Not available"
+        if isinstance(value, float) and not value.is_integer():
+            return f"{value:.1f} ms"
+        return f"{value:.0f} ms"
+
+    def calculate_internet_quality_score(
+        self,
+        packet_loss_percent,
+        avg_ping,
+        jitter,
+        dns_response_ms,
+        download_mbps=None,
+        upload_mbps=None,
+    ):
+        score = 100 - (packet_loss_percent * 5)
+
+        if avg_ping is None:
+            score -= 30
+        elif avg_ping > 150:
+            score -= 30
+        elif avg_ping > 100:
+            score -= 20
+        elif avg_ping > 50:
+            score -= 10
+
+        if jitter is not None:
+            if jitter > 60:
+                score -= 20
+            elif jitter > 30:
+                score -= 10
+
+        if dns_response_ms is None:
+            score -= 10
+        elif dns_response_ms > 500:
+            score -= 20
+        elif dns_response_ms > 200:
+            score -= 10
+
+        if download_mbps is not None:
+            if download_mbps < 3:
+                score -= 30
+            elif download_mbps < 10:
+                score -= 15
+
+        if upload_mbps is not None:
+            if upload_mbps < 1:
+                score -= 30
+            elif upload_mbps < 3:
+                score -= 15
+
+        return max(0, min(100, score))
+
+    def get_internet_quality_status(self, score):
+        if score >= 90:
+            return "EXCELLENT"
+        if score >= 75:
+            return "GOOD"
+        if score >= 50:
+            return "WARNING"
+        return "BAD"
+
+    def run_speed_test(self):
+        try:
+            import speedtest
+        except ImportError:
+            return {
+                "available": False,
+                "failed": False,
+                "download_mbps": None,
+                "upload_mbps": None,
+                "error": None,
+            }
+
+        try:
+            tester = speedtest.Speedtest()
+            tester.get_best_server()
+            download_mbps = tester.download() / 1_000_000
+            upload_mbps = tester.upload() / 1_000_000
+            return {
+                "available": True,
+                "failed": False,
+                "download_mbps": download_mbps,
+                "upload_mbps": upload_mbps,
+                "error": None,
+            }
+        except Exception as error:
+            return {
+                "available": True,
+                "failed": True,
+                "download_mbps": None,
+                "upload_mbps": None,
+                "error": str(error),
+            }
+
+    def run_quality_ping(self, target, count):
+        try:
+            result = subprocess.run(
+                ["ping", "-n", str(count), "-w", "1000", target],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+                timeout=count + 10,
+            )
+            return self.parse_ping_quality_output(f"{result.stdout}\n{result.stderr}", count)
+        except FileNotFoundError:
+            self.write_line("ERROR: The Windows ping command was not found.")
+            return None
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout.decode("utf-8", errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+            stderr = error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+            ping_output = f"{stdout}\n{stderr}"
+            self.write_line(f"WARNING: Ping test to {target} timed out before all replies were received.")
+            return self.parse_ping_quality_output(ping_output, count)
+
+    def ping_is_ok(self, metrics):
+        return (
+            metrics is not None
+            and metrics["packets_received"] > 0
+            and metrics["packet_loss_percent"] <= 2
+        )
+
+    def ping_failed_or_high_loss(self, metrics):
+        return (
+            metrics is None
+            or metrics["packets_received"] == 0
+            or metrics["packet_loss_percent"] > 5
+        )
+
+    def build_internet_diagnosis(
+        self,
+        gateway_metrics,
+        internet_metrics,
+        domain_metrics,
+        dns_response_ms,
+        dns_failed,
+        speed_results,
+    ):
+        diagnoses = []
+        categories = set()
+
+        if self.ping_failed_or_high_loss(gateway_metrics):
+            diagnoses.append("Problem likely inside the local network, Wi-Fi, network adapter, or router.")
+            categories.add("local")
+        elif self.ping_is_ok(gateway_metrics) and self.ping_failed_or_high_loss(internet_metrics):
+            diagnoses.append("Problem likely with the internet connection, ISP, modem, or WAN link.")
+            categories.add("isp")
+
+        if self.ping_is_ok(internet_metrics) and (self.ping_failed_or_high_loss(domain_metrics) or dns_failed):
+            diagnoses.append("Problem likely related to DNS.")
+            categories.add("dns")
+
+        if gateway_metrics is not None and gateway_metrics["avg_ping"] is not None and gateway_metrics["avg_ping"] > 50:
+            diagnoses.append(
+                "Local network latency is high. Possible causes: weak Wi-Fi signal, overloaded router, or local network congestion."
+            )
+            categories.add("local")
+
+        if internet_metrics is not None:
+            internet_loss = internet_metrics["packet_loss_percent"]
+            if 2 <= internet_loss <= 5:
+                diagnoses.append("Minor packet loss detected. This may affect video calls, gaming, VoIP, or live systems.")
+                categories.add("packet_loss")
+            elif internet_loss > 5:
+                diagnoses.append("High packet loss detected. Internet connection is unstable.")
+                categories.add("packet_loss")
+
+        if dns_response_ms is not None and dns_response_ms > 200:
+            diagnoses.append("DNS response is slow. Consider changing DNS server or checking router DNS settings.")
+            categories.add("dns")
+
+        if not speed_results["available"]:
+            categories.add("speed_unavailable")
+        elif speed_results["failed"]:
+            diagnoses.append(
+                "Speed test failed. This may be caused by blocked speedtest servers, firewall, or temporary internet issue."
+            )
+            categories.add("speed_failed")
+        else:
+            download_mbps = speed_results["download_mbps"]
+            upload_mbps = speed_results["upload_mbps"]
+            if download_mbps is not None and download_mbps < 10:
+                diagnoses.append(
+                    "Download speed is low. This may affect browsing, streaming, updates, and cloud services."
+                )
+                categories.add("low_download")
+            if upload_mbps is not None and upload_mbps < 3:
+                diagnoses.append(
+                    "Upload speed is low. This may affect video calls, file uploads, cloud backup, and cameras."
+                )
+                categories.add("low_upload")
+
+        if not diagnoses:
+            diagnoses.append(
+                "Internet connection looks stable. No major gateway, DNS, latency, jitter, or packet loss issues detected."
+            )
+            categories.add("good")
+
+        return diagnoses, categories
+
+    def build_recommended_actions(self, categories):
+        actions = []
+
+        if "dns" in categories:
+            actions.extend(
+                [
+                    "Try changing DNS to 8.8.8.8 or 1.1.1.1.",
+                    "Check router DNS settings.",
+                ]
+            )
+
+        if "local" in categories:
+            actions.extend(
+                [
+                    "Check Wi-Fi signal.",
+                    "Test with Ethernet cable.",
+                    "Restart router.",
+                    "Check network adapter.",
+                ]
+            )
+
+        if "isp" in categories:
+            actions.extend(
+                [
+                    "Restart modem/router.",
+                    "Test from another device.",
+                    "Contact ISP if the issue continues.",
+                ]
+            )
+
+        if "packet_loss" in categories:
+            actions.extend(
+                [
+                    "Test using Ethernet cable.",
+                    "Stop heavy downloads.",
+                    "Check if other devices have the same issue.",
+                    "Contact ISP if packet loss continues.",
+                ]
+            )
+
+        if "low_download" in categories:
+            actions.append(
+                "Restart router, test with Ethernet cable, stop heavy downloads, and compare with your ISP package speed."
+            )
+
+        if "low_upload" in categories:
+            actions.append(
+                "Check if cameras/cloud backup are using upload, test with Ethernet, and compare with your ISP upload package."
+            )
+
+        if "speed_unavailable" in categories:
+            actions.append("Install speedtest-cli using: py -m pip install speedtest-cli")
+
+        if "good" in categories:
+            actions.append("No action needed. The connection quality is excellent.")
+
+        unique_actions = []
+        for action in actions:
+            if action not in unique_actions:
+                unique_actions.append(action)
+        return unique_actions
+
+    def write_ping_summary(self, title, metrics):
+        self.write_line(f"{title}:")
+        if metrics is None:
+            self.write_line("  Ping: Not available")
+            return
+
+        self.write_line(f"  Packets Sent: {metrics['packets_sent']}")
+        self.write_line(f"  Packets Received: {metrics['packets_received']}")
+        self.write_line(f"  Packets Lost: {metrics['packets_lost']}")
+        self.write_line(f"  Packet Loss: {metrics['packet_loss_percent']:.0f}%")
+        self.write_line(f"  Min Ping: {self.format_ms_value(metrics['min_ping'])}")
+        self.write_line(f"  Max Ping: {self.format_ms_value(metrics['max_ping'])}")
+        self.write_line(f"  Avg Ping: {self.format_ms_value(metrics['avg_ping'])}")
+        self.write_line(f"  Jitter: {self.format_ms_value(metrics['jitter'])}")
+
+    def internet_quality_test(self):
+        internet_target = "8.8.8.8"
+        domain_target = "google.com"
+
+        def task():
+            self.write_line("Running Internet Quality Test...")
+
+            adapter = self.get_active_network_details()
+            gateway = adapter["gateway"] if adapter else None
+
+            gateway_metrics = None
+            if gateway:
+                gateway_metrics = self.run_quality_ping(gateway, 10)
+
+            internet_metrics = self.run_quality_ping(internet_target, 20)
+            domain_metrics = self.run_quality_ping(domain_target, 10)
+
+            dns_response_ms = None
+            dns_failed = False
+            try:
+                dns_start = time.perf_counter()
+                socket.gethostbyname(domain_target)
+                dns_response_ms = (time.perf_counter() - dns_start) * 1000
+            except socket.gaierror:
+                dns_failed = True
+                dns_response_ms = None
+
+            self.write_line("Running speed test...")
+            speed_results = self.run_speed_test()
+
+            internet_loss = internet_metrics["packet_loss_percent"] if internet_metrics else 100
+            internet_avg_ping = internet_metrics["avg_ping"] if internet_metrics else None
+            internet_jitter = internet_metrics["jitter"] if internet_metrics else None
+            download_mbps = speed_results["download_mbps"]
+            upload_mbps = speed_results["upload_mbps"]
+            score = self.calculate_internet_quality_score(
+                internet_loss,
+                internet_avg_ping,
+                internet_jitter,
+                dns_response_ms,
+                download_mbps,
+                upload_mbps,
+            )
+            status = self.get_internet_quality_status(score)
+            diagnoses, categories = self.build_internet_diagnosis(
+                gateway_metrics,
+                internet_metrics,
+                domain_metrics,
+                dns_response_ms,
+                dns_failed,
+                speed_results,
+            )
+            actions = self.build_recommended_actions(categories)
+
+            self.write_line("")
+            self.write_line("Internet Quality Test")
+            self.write_line("---------------------")
+            self.write_line(f"Gateway: {gateway if gateway else 'Not detected'}")
+            self.write_line(f"Gateway Ping: {'Available' if gateway_metrics else 'Not available'}")
+            if gateway_metrics:
+                self.write_line(f"Gateway Packet Loss: {gateway_metrics['packet_loss_percent']:.0f}%")
+                self.write_line(f"Gateway Avg Ping: {self.format_ms_value(gateway_metrics['avg_ping'])}")
+            else:
+                self.write_line("Gateway Packet Loss: Not available")
+                self.write_line("Gateway Avg Ping: Not available")
+
+            self.write_line("")
+            self.write_line(f"Internet Target: {internet_target}")
+            if internet_metrics:
+                self.write_line(f"Packets Sent: {internet_metrics['packets_sent']}")
+                self.write_line(f"Packets Received: {internet_metrics['packets_received']}")
+                self.write_line(f"Packets Lost: {internet_metrics['packets_lost']}")
+                self.write_line(f"Packet Loss: {internet_metrics['packet_loss_percent']:.0f}%")
+                self.write_line(f"Min Ping: {self.format_ms_value(internet_metrics['min_ping'])}")
+                self.write_line(f"Max Ping: {self.format_ms_value(internet_metrics['max_ping'])}")
+                self.write_line(f"Avg Ping: {self.format_ms_value(internet_metrics['avg_ping'])}")
+                self.write_line(f"Jitter: {self.format_ms_value(internet_metrics['jitter'])}")
+            else:
+                self.write_line("Packets Sent: 20")
+                self.write_line("Packets Received: 0")
+                self.write_line("Packets Lost: 20")
+                self.write_line("Packet Loss: 100%")
+                self.write_line("Min Ping: Not available")
+                self.write_line("Max Ping: Not available")
+                self.write_line("Avg Ping: Not available")
+                self.write_line("Jitter: Not available")
+
+            self.write_line("")
+            self.write_line("Domain Test:")
+            self.write_line(f"Domain: {domain_target}")
+            self.write_line(f"Domain Ping: {'Available' if domain_metrics and domain_metrics['packets_received'] > 0 else 'Failed'}")
+            self.write_line(f"DNS Response Time: {self.format_ms_value(dns_response_ms)}")
+            self.write_line("")
+            self.write_line("Speed Test:")
+            if not speed_results["available"]:
+                self.write_line("Speed test is not available. Install it with: py -m pip install speedtest-cli")
+                self.write_line("Download Speed: Not available")
+                self.write_line("Upload Speed: Not available")
+            elif speed_results["failed"]:
+                self.write_line(
+                    "Speed test failed. This may be caused by blocked speedtest servers, firewall, or temporary internet issue."
+                )
+                if speed_results["error"]:
+                    self.write_line(f"Speed Test Error: {speed_results['error']}")
+                self.write_line("Download Speed: Not available")
+                self.write_line("Upload Speed: Not available")
+            else:
+                self.write_line(f"Download Speed: {download_mbps:.2f} Mbps")
+                self.write_line(f"Upload Speed: {upload_mbps:.2f} Mbps")
+            self.write_line("")
+            self.write_line(f"Internet Quality Score: {score:.0f}/100")
+            self.write_line(f"Status: {status}")
+            self.write_line("")
+            self.write_line("Smart Diagnosis:")
+            for diagnosis in diagnoses:
+                self.write_line(f"- {diagnosis}")
+            self.write_line("")
+            self.write_line("Recommended Actions:")
+            for action in actions:
+                self.write_line(f"- {action}")
+
+        self.run_in_background("Internet Quality Test", task)
 
     def check_port(self, host, port):
         try:
