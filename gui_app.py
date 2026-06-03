@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import os
 import re
@@ -409,6 +410,99 @@ class SmartInternetTroubleshooter(tk.Tk):
             except socket.gaierror:
                 return None
 
+    def extract_ipv4_from_text(self, text):
+        match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
+        if not match:
+            return None
+
+        ip_text = match.group(0)
+        try:
+            return str(ipaddress.IPv4Address(ip_text))
+        except ipaddress.AddressValueError:
+            return None
+
+    def is_supported_private_lan_ip(self, ip_address):
+        ip = ipaddress.IPv4Address(ip_address)
+        supported_networks = (
+            ipaddress.IPv4Network("10.0.0.0/8"),
+            ipaddress.IPv4Network("172.16.0.0/12"),
+            ipaddress.IPv4Network("192.168.0.0/16"),
+        )
+        return any(ip in network for network in supported_networks)
+
+    def get_active_network_details(self):
+        try:
+            result = subprocess.run(
+                ["ipconfig"],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return None
+
+        adapters = []
+        current_adapter = None
+        waiting_for_gateway_value = False
+
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if stripped.lower().endswith(":") and "adapter" in stripped.lower():
+                current_adapter = {
+                    "name": stripped[:-1],
+                    "ip": None,
+                    "subnet_mask": None,
+                    "gateway": None,
+                }
+                adapters.append(current_adapter)
+                waiting_for_gateway_value = False
+                continue
+
+            if current_adapter is None:
+                continue
+
+            if waiting_for_gateway_value:
+                gateway_ip = self.extract_ipv4_from_text(stripped)
+                if gateway_ip:
+                    current_adapter["gateway"] = gateway_ip
+                    waiting_for_gateway_value = False
+                    continue
+
+            if ":" not in stripped:
+                continue
+
+            key, value = stripped.split(":", 1)
+            key = key.lower()
+            value = value.strip()
+
+            if "ipv4 address" in key:
+                current_adapter["ip"] = self.extract_ipv4_from_text(value)
+            elif "subnet mask" in key:
+                current_adapter["subnet_mask"] = self.extract_ipv4_from_text(value)
+            elif "default gateway" in key:
+                gateway_ip = self.extract_ipv4_from_text(value)
+                if gateway_ip:
+                    current_adapter["gateway"] = gateway_ip
+                    waiting_for_gateway_value = False
+                else:
+                    waiting_for_gateway_value = True
+
+        for adapter in adapters:
+            local_ip = adapter["ip"]
+            subnet_mask = adapter["subnet_mask"]
+            gateway = adapter["gateway"]
+            if not local_ip or not subnet_mask or not gateway:
+                continue
+            if self.is_supported_private_lan_ip(local_ip):
+                return adapter
+
+        return None
+
     def get_known_device_addresses(self):
         known_addresses = set()
         for device in self.get_devices():
@@ -505,21 +599,47 @@ class SmartInternetTroubleshooter(tk.Tk):
             messagebox.showinfo("Discover Network Devices", "Discovery is already running.")
             return
 
-        local_ip = self.get_local_ipv4_address()
-        if not local_ip:
-            messagebox.showerror("Discover Network Devices", "Could not determine the local IP address.")
-            return
-
-        octets = local_ip.split(".")
-        if len(octets) != 4 or octets[0] != "192" or octets[1] != "168":
+        adapter = self.get_active_network_details()
+        if adapter is None:
             messagebox.showerror(
                 "Discover Network Devices",
-                f"Discovery currently supports 192.168.x.x local networks only.\n\nLocal IP: {local_ip}",
+                "Could not detect local IP/subnet mask for discovery.",
             )
             return
 
-        subnet_prefix = ".".join(octets[:3])
-        scan_addresses = [f"{subnet_prefix}.{number}" for number in range(1, 255)]
+        local_ip = adapter["ip"]
+        subnet_mask = adapter["subnet_mask"]
+        gateway = adapter["gateway"]
+
+        try:
+            network = ipaddress.IPv4Network((local_ip, subnet_mask), strict=False)
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
+            messagebox.showerror(
+                "Discover Network Devices",
+                "Could not detect local IP/subnet mask for discovery.",
+            )
+            return
+
+        usable_host_count = max(network.num_addresses - 2, 0)
+        if usable_host_count > 1024:
+            self.write_section("Discover Network Devices")
+            self.write_line(f"Local IP: {local_ip}")
+            self.write_line(f"Subnet Mask: {subnet_mask}")
+            self.write_line(f"Default Gateway: {gateway}")
+            self.write_line(f"Network: {network}")
+            self.write_line("Subnet is too large to scan safely. Please use a smaller subnet or manual range.")
+            return
+
+        scan_addresses = [str(address) for address in network.hosts()]
+        if not scan_addresses:
+            self.write_section("Discover Network Devices")
+            self.write_line(f"Local IP: {local_ip}")
+            self.write_line(f"Subnet Mask: {subnet_mask}")
+            self.write_line(f"Default Gateway: {gateway}")
+            self.write_line(f"Network: {network}")
+            self.write_line("No usable host addresses were found in this subnet.")
+            return
+
         known_addresses = self.get_known_device_addresses()
         self.discovery_running = True
         self.discovery_cancel_event.clear()
@@ -535,8 +655,12 @@ class SmartInternetTroubleshooter(tk.Tk):
 
             try:
                 self.write_section("Discover Network Devices")
-                self.write_line(f"Starting authorized local network discovery from local IP {local_ip}.")
-                self.write_line(f"Scanning subnet: {subnet_prefix}.1 to {subnet_prefix}.254")
+                self.write_line(f"Local IP: {local_ip}")
+                self.write_line(f"Subnet Mask: {subnet_mask}")
+                self.write_line(f"Default Gateway: {gateway}")
+                self.write_line(f"Network: {network}")
+                self.write_line(f"Scan range: {scan_addresses[0]} - {scan_addresses[-1]}")
+                self.write_line("Starting authorized local network discovery.")
 
                 with ThreadPoolExecutor(max_workers=30) as executor:
                     futures = [
