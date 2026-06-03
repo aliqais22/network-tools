@@ -247,6 +247,19 @@ Features:
 - EXE build
 - Installer with icon
 - Smarter troubleshooting suggestions
+### v0.4.1 - Improved Subnet Detection
+
+Improved Network Discovery to detect the real local subnet from the active Windows network adapter.
+
+New improvements:
+- Supports private LAN ranges:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+- Detects local IPv4 address, subnet mask, and default gateway
+- Calculates the real scan range using the subnet mask
+- Prevents scanning very large networks
+- Example: 10.0.0.2 with subnet mask 255.255.255.0 scans 10.0.0.1 to 10.0.0.254
 
 ## Version
 
