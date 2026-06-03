@@ -264,3 +264,6 @@ New improvements:
 ## Version
 
 Current version: v0.4 - Network Discovery and Unknown Device Detection
+
+<img width="3763" height="5138" alt="NotebookLM Mind Map (1)" src="https://github.com/user-attachments/assets/cb6bc5ca-0a3d-4bae-a560-2bf86628a737" />
+
