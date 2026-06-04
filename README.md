@@ -1,3 +1,6 @@
+<img width="1917" height="1034" alt="צילום מסך 2026-06-04 212448" src="https://github.com/user-attachments/assets/239790db-373e-4518-a982-7c347bcafe33" />
+
+
 # Smart Internet Troubleshooter
 
 Smart Internet Troubleshooter is a Windows Python GUI application for basic network troubleshooting, company device checking, and local network discovery.
