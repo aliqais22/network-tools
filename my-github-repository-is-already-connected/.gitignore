@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# App data (local, per-machine)
+logs/
+devices.json
+
+# Packaging (future)
+dist/
+build/
+*.spec
+
+# Environment / secrets
+.env
+
+# Local scratch folders
+outputs/
+work/
