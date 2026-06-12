@@ -1,4 +1,10 @@
-<img width="1917" height="1034" alt="צילום מסך 2026-06-04 212448" src="https://github.com/user-attachments/assets/239790db-373e-4518-a982-7c347bcafe33" />
+<img width="1272" height="887" alt="צילום מסך 2026-06-12 153625" src="https://github.com/user-attachments/assets/b965e583-e699-4339-8e36-fd1237a4c14a" />
+<img width="1272" height="890" alt="צילום מסך 2026-06-12 153620" src="https://github.com/user-attachments/assets/ff12f842-fa08-4155-be18-7319e424d87b" />
+<img width="1276" height="884" alt="צילום מסך 2026-06-12 153613" src="https://github.com/user-attachments/assets/b712ab4c-8497-40c8-8852-455a9a2ce29f" />
+<img width="1272" height="887" alt="צילום מסך 2026-06-12 153607" src="https://github.com/user-attachments/assets/0c016834-3f9b-4016-a0c4-de9340252cea" />
+<img width="1278" height="885" alt="צילום מסך 2026-06-12 153639" src="https://github.com/user-attachments/assets/907bfcb0-40ac-49e2-8764-56c81d6946e6" />
+<img width="1273" height="886" alt="צילום מסך 2026-06-12 153633" src="https://github.com/user-attachments/assets/6f7ac5ae-1883-4bb8-957a-1c2b68c4465b" />
+
 
 
 # Smart Internet Troubleshooter
