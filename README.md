@@ -135,3 +135,9 @@ EXE packaging and an installer are planned **after** v1.0.
 ## License
 
 Not yet specified. Until a license is added, all rights are reserved by the author.
+<img width="1272" height="887" alt="צילום מסך 2026-06-12 153625" src="https://github.com/user-attachments/assets/cabc9c68-2a5b-4f48-b959-fd531f19e246" />
+<img width="1272" height="890" alt="צילום מסך 2026-06-12 153620" src="https://github.com/user-attachments/assets/933b6ba4-ee85-40a4-89a8-e7aace819e15" />
+<img width="1276" height="884" alt="צילום מסך 2026-06-12 153613" src="https://github.com/user-attachments/assets/bf44bcea-c145-4792-9327-d594c4a78ba1" />
+<img width="1272" height="887" alt="צילום מסך 2026-06-12 153607" src="https://github.com/user-attachments/assets/4dd0179a-86dc-48d1-954a-f9c92d1b3b6a" />
+<img width="1278" height="885" alt="צילום מסך 2026-06-12 153639" src="https://github.com/user-attachments/assets/6a34f1b9-fc56-44d1-adb5-ecaa9dd78d1d" />
+<img width="1273" height="886" alt="צילום מסך 2026-06-12 153633" src="https://github.com/user-attachments/assets/5f9df234-57ee-4187-ab90-98f1a023661d" />
